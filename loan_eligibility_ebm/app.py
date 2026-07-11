@@ -1,169 +1,118 @@
 """
 app.py
 --------
-Streamlit web app: "Explainable Loan Eligibility Prediction"
+Landing page for "Explainable Loan Eligibility Prediction".
 
-A bank employee enters an applicant's details on the left, clicks
-"Check Eligibility", and instantly sees:
-  1. The decision (Approved / Rejected) and confidence %.
-  2. A plain-English explanation of WHY - the top factors that helped
-     and the top factors that hurt the application.
-  3. An overall feature-importance chart (what the model cares about
-     in general, across all applicants).
+This page introduces the tool and shows what the model weighs most
+overall. The actual applicant form now lives on its own page
+(pages/1_Check_Eligibility.py), and results are shown on a dedicated
+results page (pages/2_Result.py).
 
 Run with:
     streamlit run app.py
 """
 
-import os
-import pickle
-import pandas as pd
 import streamlit as st
+import plotly.graph_objects as go
 
-from src.explain_utils import explain_prediction_in_words, get_global_feature_importance
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "models", "ebm_model.pkl")
-COLUMNS_PATH = os.path.join(BASE_DIR, "models", "columns_info.pkl")
+from src.model_utils import load_model_and_columns
+from src.explain_utils import get_global_feature_importance
+from src.ui_theme import inject_theme, render_seal, plotly_theme_layout, COLORS
 
 st.set_page_config(
     page_title="Explainable Loan Eligibility Prediction",
     page_icon="🏦",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
-
-@st.cache_resource
-def load_model_and_columns():
-    with open(MODEL_PATH, "rb") as f:
-        model = pickle.load(f)
-    with open(COLUMNS_PATH, "rb") as f:
-        columns_info = pickle.load(f)
-    return model, columns_info
+inject_theme()
 
 
-def build_input_form(columns_info):
-    """
-    Dynamically builds the input form based on the columns the model was
-    trained on (from columns_info), so this works even if you regenerate
-    the dataset with different columns later.
-    """
-    st.sidebar.header("📋 Applicant Details")
-    inputs = {}
-
-    # Nicely group a few known fields, but fall back to generic widgets
-    # for anything else, so the app "handles various columns" robustly.
-    numeric_cols = columns_info["numeric_cols"]
-    categorical_cols = columns_info["categorical_cols"]
-    numeric_ranges = columns_info["numeric_ranges"]
-    categorical_options = columns_info["categorical_options"]
-
-    # Sensible default values for the demo fields we know about.
-    defaults = {
-        "age": 30,
-        "dependents": 0,
-        "applicant_income": 45000,
-        "coapplicant_income": 0,
-        "credit_score": 700,
-        "loan_amount": 200,
-        "loan_term_months": 180,
-        "existing_loans_count": 0,
-    }
-
-    for col in numeric_cols:
-        lo, hi = numeric_ranges[col]
-        default = defaults.get(col, lo)
-        default = min(max(default, lo), hi)
-        label = col.replace("_", " ").title()
-        inputs[col] = st.sidebar.number_input(
-            label, min_value=int(lo), max_value=int(hi), value=int(default), step=1
+def render_hero():
+    left, right = st.columns([1.3, 1], gap="large")
+    with left:
+        st.markdown('<div class="eyebrow">EXPLAINABLE CREDIT DECISIONS</div>', unsafe_allow_html=True)
+        st.markdown("## Every approval, accountable.")
+        st.markdown(
+            "An Explainable Boosting Machine reviews each application and shows "
+            "its full reasoning — not an approximation of it. No black box, "
+            "no post-hoc guesswork: the number on the screen **is** the model's "
+            "actual decision math, translated into plain English for the desk."
         )
+        st.write("")
+        if st.button("Begin Assessment →", type="primary"):
+            st.switch_page("pages/1_Check_Eligibility.py")
+    with right:
+        st.markdown(render_seal(), unsafe_allow_html=True)
 
-    for col in categorical_cols:
-        options = categorical_options[col]
-        label = col.replace("_", " ").title()
-        inputs[col] = st.sidebar.selectbox(label, options)
 
-    return inputs
+def render_feature_strip():
+    st.write("")
+    st.markdown(
+        f"""
+        <div class="feature-strip">
+            <div class="feature-block">
+                <div class="mark">GLASSBOX MODEL</div>
+                <p style="margin-top:0.5rem;">Built on an EBM, whose additive structure means every
+                prediction can be decomposed feature-by-feature — no SHAP or LIME
+                approximation required.</p>
+            </div>
+            <div class="feature-block">
+                <div class="mark">CASE-LEVEL REASONING</div>
+                <p style="margin-top:0.5rem;">Each assessment names the specific factors that helped
+                and hurt an application, in language built for the desk, not the lab.</p>
+            </div>
+            <div class="feature-block">
+                <div class="mark">AUDIT READY</div>
+                <p style="margin-top:0.5rem;">Because the reasoning is exact rather than approximated,
+                every decision holds up the same way on review as it did at approval.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_global_importance(model):
+    st.write("")
+    st.write("")
+    st.markdown('<div class="eyebrow">MODEL OVERVIEW</div>', unsafe_allow_html=True)
+    st.markdown("### What the model weighs most, overall")
+    st.markdown(
+        '<div class="case-card">',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "Averaged across every applicant the model has seen — not any single case. "
+        "This is the model's general policy, before any one applicant's details are applied."
+    )
+
+    importance_df = get_global_feature_importance(model)
+    importance_df["feature"] = importance_df["feature"].str.replace("_", " ").str.title()
+    importance_df = importance_df.sort_values("importance", ascending=True)
+
+    fig = go.Figure(
+        go.Bar(
+            x=importance_df["importance"],
+            y=importance_df["feature"],
+            orientation="h",
+            marker_color=COLORS["brass"],
+        )
+    )
+    fig.update_layout(**plotly_theme_layout(height=380))
+    fig.update_xaxes(title="Average impact on the decision", gridcolor=COLORS["paper_dim"])
+    fig.update_yaxes(title="")
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def main():
-    st.title("🏦 Explainable Loan Eligibility Prediction")
-    st.caption(
-        "Powered by an Explainable Boosting Machine (EBM) — a model that is "
-        "as accurate as typical machine learning models, but every decision "
-        "can be explained in plain English."
-    )
-
-    model, columns_info = load_model_and_columns()
-    inputs = build_input_form(columns_info)
-
-    check_clicked = st.sidebar.button("🔍 Check Eligibility", type="primary", use_container_width=True)
-
-    if not check_clicked:
-        st.info(
-            "⬅️ Fill in the applicant's details in the sidebar and click "
-            "**Check Eligibility** to get a decision with a plain-English explanation."
-        )
-        show_global_importance(model)
-        return
-
-    # Build a single-row DataFrame in the exact column order the model expects.
-    row_dict = {col: inputs[col] for col in columns_info["feature_order"]}
-    X_row = pd.DataFrame([row_dict])
-
-    result = explain_prediction_in_words(model, X_row, top_k=5)
-
-    render_result(result)
-    st.divider()
-    show_global_importance(model)
-
-
-def render_result(result):
-    decision = result["decision"]
-    proba = result["probability"]
-
-    if decision == "Approved":
-        st.success(f"### ✅ Loan {decision}")
-    else:
-        st.error(f"### ❌ Loan {decision}")
-
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        st.metric("Approval Confidence", f"{proba:.0%}")
-        st.progress(min(max(proba, 0.0), 1.0))
-    with col2:
-        st.write(result["summary_sentence"])
-
-    st.subheader("Why this decision? (in plain English)")
-
-    col_support, col_oppose = st.columns(2)
-    with col_support:
-        st.markdown("**👍 Factors that HELPED the application:**")
-        if result["supporting_reasons"]:
-            for reason in result["supporting_reasons"]:
-                st.markdown(f"- {reason}")
-        else:
-            st.markdown("_No strongly positive factors found._")
-
-    with col_oppose:
-        st.markdown("**👎 Factors that HURT the application:**")
-        if result["opposing_reasons"]:
-            for reason in result["opposing_reasons"]:
-                st.markdown(f"- {reason}")
-        else:
-            st.markdown("_No strongly negative factors found._")
-
-
-def show_global_importance(model):
-    st.subheader("📊 What Matters Most, Overall")
-    st.caption(
-        "This chart shows which factors the model relies on the most, "
-        "averaged across ALL applicants (not just this one)."
-    )
-    importance_df = get_global_feature_importance(model)
-    importance_df["feature"] = importance_df["feature"].str.replace("_", " ").str.title()
-    st.bar_chart(importance_df.set_index("feature")["importance"])
+    render_hero()
+    render_feature_strip()
+    model, _columns_info = load_model_and_columns()
+    render_global_importance(model)
 
 
 if __name__ == "__main__":

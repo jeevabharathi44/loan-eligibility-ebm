@@ -151,3 +151,39 @@ def get_global_feature_importance(model) -> pd.DataFrame:
         {"feature": data["names"], "importance": data["scores"]}
     ).sort_values("importance", ascending=False).reset_index(drop=True)
     return df
+
+
+def get_contribution_chart_data(model, X_row: pd.DataFrame, top_k: int = 6) -> pd.DataFrame:
+    """
+    Returns a tidy DataFrame of the top_k strongest per-applicant
+    contributions, ready to feed a tornado-style diverging bar chart:
+        columns -> feature (display name), score, direction ('Helped'/'Hurt')
+    Sorted ascending by absolute score, so the strongest factor plots
+    at the top when rendered as a horizontal Plotly bar.
+    """
+    contributions = get_local_contributions(model, X_row)[:top_k]
+    rows = []
+    for feature, score, _value in contributions:
+        rows.append(
+            {
+                "feature": FEATURE_DISPLAY_NAMES.get(feature, feature.replace("_", " ").title()),
+                "score": float(score),
+                "direction": "Helped" if score > 0 else "Hurt",
+            }
+        )
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    return df.reindex(df["score"].abs().sort_values(ascending=True).index).reset_index(drop=True)
+
+
+def get_evidence_balance(model, X_row: pd.DataFrame) -> Dict[str, float]:
+    """
+    Sums the total positive vs. total negative contribution magnitude
+    across ALL features (not just the top_k shown as reasons), for a
+    donut chart showing the overall 'weight of evidence' balance.
+    """
+    contributions = get_local_contributions(model, X_row)
+    positive_total = sum(s for _f, s, _v in contributions if s > 0)
+    negative_total = sum(abs(s) for _f, s, _v in contributions if s < 0)
+    return {"Helped": positive_total, "Hurt": negative_total}
