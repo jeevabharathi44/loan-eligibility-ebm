@@ -1,0 +1,15 @@
+# Core ML / explainability
+interpret==0.7.8
+scikit-learn==1.8.0
+pandas==3.0.2
+numpy==2.4.4
+
+# Web app
+streamlit==1.59.1
+
+# Included for optional comparison with a "black-box" gradient boosting
+# model (only needed if you do the "EBM vs LightGBM" comparison section)
+lightgbm==4.6.0
+
+# Used internally by interpret for plots/notebooks
+plotly==6.9.0
